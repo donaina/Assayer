@@ -16,13 +16,13 @@ import (
 
 // Spec is one scenario.
 type Spec struct {
-	Name     string
-	Seed     uint64
-	Ops      int
-	Accounts []Account
-	Limits   map[assay.AccountID]assay.Money
-	Weights  Weights
-	Timeout  time.Duration
+	Name       string
+	Seed       uint64
+	Ops        int
+	Accounts   []Account
+	Limits     map[assay.AccountID]assay.Money
+	Weights    Weights
+	Timeout    time.Duration
 	Invariants []string
 }
 

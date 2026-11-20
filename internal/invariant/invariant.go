@@ -115,16 +115,38 @@ func accepted(o assay.Observation) []assay.Intent {
 	return out
 }
 
-// acceptedByIDem groups the accepted attempts by idempotency key.
+// acceptedByIDem groups the accepted attempts by idempotency key, once per
+// distinct transaction.
 //
-// More than one attempt under a key means the system took the same intent more
-// than once, which is the failure INV-DOUBLE exists to name.
+// The grouping is by transaction id and not by attempt count, because a correct
+// system answers a retry with the original transaction: two attempts and one
+// transaction is what idempotency is supposed to look like. Only a second,
+// distinct transaction under the same key means the system took the intent
+// twice, which is the failure INV-DOUBLE exists to name.
+//
+// A system that posts twice but reports one transaction id is not invisible, it
+// is just not this invariant's business: INV-CONSERVE counts money rather than
+// transactions and will find the extra posting.
+//
+// An accepted result with no transaction id cannot be shown to be the same
+// transaction as any other, so it counts as distinct. That reports a double post
+// for a driver that cannot name its transactions, which is a defect in the
+// driver worth seeing rather than a defect in the money worth hiding.
 func acceptedByIDem(o assay.Observation) map[string][]assay.Attempt {
 	out := make(map[string][]assay.Attempt)
+	seen := make(map[string]bool, len(o.Attempts))
 	for _, a := range o.Attempts {
-		if a.Result.Outcome == assay.Accepted {
-			out[a.Intent.Idem] = append(out[a.Intent.Idem], a)
+		if a.Result.Outcome != assay.Accepted {
+			continue
 		}
+		if a.Result.TxnID != "" {
+			k := a.Intent.Idem + "\x00" + a.Result.TxnID
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+		}
+		out[a.Intent.Idem] = append(out[a.Intent.Idem], a)
 	}
 	return out
 }
