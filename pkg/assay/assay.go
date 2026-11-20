@@ -140,6 +140,37 @@ type Observation struct {
 	After    State
 	Attempts []Attempt
 	Postings []Posting
+
+	// States is every balance reading taken during the run, in order, with
+	// Before as the first element and After as the last.
+	//
+	// It exists because an invariant that says "never" cannot be checked at
+	// the end. An account that went negative and was then covered by an
+	// incoming credit ends the run looking healthy, and that is precisely the
+	// incident shape that costs money: the bank was exposed for a window and
+	// the closing balance hides it. A checker that only reads After is
+	// checking a postcondition, not an invariant.
+	//
+	// The cost is one extra read per attempt. That is free for an in-process
+	// driver and one request per operation for an HTTP one, which is the right
+	// trade for a correctness run. Load runs measure throughput and do not
+	// check invariants per operation, so they do not pay it.
+	States []State
+}
+
+// Readings returns the states to check a "never" invariant against.
+//
+// Hand-built observations in tests often carry only After, so an empty States
+// falls back to it rather than silently checking nothing — a checker that
+// passes because it had no input is worse than one that fails.
+func (o Observation) Readings() []State {
+	if len(o.States) > 0 {
+		return o.States
+	}
+	if o.After.Accounts == nil {
+		return nil
+	}
+	return []State{o.After}
 }
 
 // Accepted returns the intents the SUT said it accepted, in order.
