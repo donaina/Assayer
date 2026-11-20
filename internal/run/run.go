@@ -66,6 +66,7 @@ func (r *Runner) Run(ctx context.Context, s spec.Spec, seed uint64) (assay.Obser
 		Seed:     seed,
 		Scenario: s.Name,
 		Before:   before,
+		States:   []assay.State{before},
 	}
 	for {
 		in, ok := gen.Next()
@@ -75,13 +76,20 @@ func (r *Runner) Run(ctx context.Context, s spec.Spec, seed uint64) (assay.Obser
 		if err := r.attempt(ctx, &obs, in); err != nil {
 			return obs, err
 		}
+		// Read the balances after every attempt, not just at the end. An
+		// overdraft that a later deposit covers leaves no trace in the
+		// closing balance, and that is the incident shape worth catching.
+		mid, err := r.driver.Snapshot(ctx)
+		if err != nil {
+			return obs, fmt.Errorf("run: snapshot after attempt %d: %w", len(obs.Attempts), err)
+		}
+		obs.States = append(obs.States, mid)
 	}
 
-	after, err := r.driver.Snapshot(ctx)
-	if err != nil {
-		return obs, fmt.Errorf("run: snapshot after: %w", err)
-	}
-	obs.After = after
+	// After is the last reading rather than a fresh one. Two reads of a live
+	// system can disagree, and an invariant that checks After against a
+	// different States tail would be comparing two different worlds.
+	obs.After = obs.States[len(obs.States)-1]
 
 	postings, err := r.driver.Postings(ctx)
 	if err != nil {

@@ -67,6 +67,59 @@ func TestKnownGoodLedgerAgreesWithItselfAcrossSeeds(t *testing.T) {
 	}
 }
 
+// TestOverdraftThatIsLaterCoveredIsStillReported pins where INV-NONNEG reads.
+//
+// A balance that dips below zero and is then covered by an incoming credit
+// leaves the closing balance healthy. Checking only the last reading would call
+// that run clean, and the run would be exactly the incident worth catching: the
+// money was spent before it arrived, the account was exposed for however many
+// operations it took to cover, and nothing in the report says so.
+//
+// The observation here is hand-built rather than driven, because the point is
+// what the checker reads, not what any driver happens to produce. A defect that
+// ends negative is caught either way; only a transient one distinguishes the
+// two designs.
+func TestOverdraftThatIsLaterCoveredIsStillReported(t *testing.T) {
+	overdrawn := assay.State{Accounts: map[assay.AccountID]assay.Money{"alice": -500}}
+	covered := assay.State{Accounts: map[assay.AccountID]assay.Money{"alice": 1_000}}
+
+	o := assay.Observation{
+		Before:   assay.State{Accounts: map[assay.AccountID]assay.Money{"alice": 500}},
+		States:   []assay.State{{Accounts: map[assay.AccountID]assay.Money{"alice": 500}}, overdrawn, covered},
+		After:    covered,
+		Attempts: []assay.Attempt{{}, {}, {}},
+	}
+
+	if findings := invariant.Run(o); !hasFinding(findings, "INV-NONNEG") {
+		t.Fatalf("a run that went to -500 and was covered ended at +1000, and INV-NONNEG "+
+			"stayed silent; the checker read the closing balance instead of every reading. "+
+			"findings were %v", findings)
+	}
+}
+
+// TestObservationWithNoReadingsChecksTheFinalState covers the hand-built
+// observation: a checker that silently passes because it had no input is worse
+// than one that fails, so an Observation carrying only After still gets checked.
+func TestObservationWithNoReadingsChecksTheFinalState(t *testing.T) {
+	o := assay.Observation{
+		After: assay.State{Accounts: map[assay.AccountID]assay.Money{"alice": -1}},
+	}
+	if findings := invariant.Run(o); !hasFinding(findings, "INV-NONNEG") {
+		t.Fatalf("an observation with only After set is overdrawn at the end "+
+			"and INV-NONNEG stayed silent; findings were %v", findings)
+	}
+}
+
+// hasFinding reports whether the named invariant fired at all.
+func hasFinding(findings []invariant.Finding, inv string) bool {
+	for _, f := range findings {
+		if f.Invariant == inv {
+			return true
+		}
+	}
+	return false
+}
+
 // mustRun runs one scenario against a fresh reference ledger.
 //
 // A fresh driver per seed, not a reused one: a shared ledger would let an

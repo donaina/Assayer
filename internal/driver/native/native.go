@@ -17,7 +17,53 @@ import (
 	"github.com/donaina/assayer/pkg/assay"
 )
 
-// Ledger is a correct, in-memory, double-entry ledger.
+// Breakage names the one way a ledger can be wrong.
+//
+// A defect is a single deviation from correct behaviour, not a pile of them, so
+// that when a detector fires there is exactly one explanation for it. Each value
+// corresponds to a way real payment systems are known to fail, which is what
+// makes the corpus in corpus_test.go a test of the detectors rather than a test
+// of the ledger.
+type Breakage int
+
+const (
+	// BreakNone is a correct ledger.
+	BreakNone Breakage = iota
+	// BreakIdempotency forgets every key it has seen, so a retry is treated as
+	// a new request and posts a second time.
+	BreakIdempotency
+	// BreakOverdraft lets a transfer post that the source cannot fund.
+	BreakOverdraft
+	// BreakDoubleCredit credits a deposit twice, which is money from nowhere.
+	BreakDoubleCredit
+)
+
+// AllBreakages is every value of Breakage, in declaration order.
+//
+// It exists so the corpus can prove it covers the whole type. A deviation added
+// here and never exercised by a test is invisible: the compiler is happy, the
+// suite is green, and the defect is simply never caught. The corpus test walks
+// this list and fails on any entry it has no case for.
+var AllBreakages = []Breakage{BreakNone, BreakIdempotency, BreakOverdraft, BreakDoubleCredit}
+
+// String implements fmt.Stringer, so a failing corpus test names the defect
+// rather than printing an integer.
+func (b Breakage) String() string {
+	switch b {
+	case BreakNone:
+		return "none"
+	case BreakIdempotency:
+		return "idempotency"
+	case BreakOverdraft:
+		return "overdraft"
+	case BreakDoubleCredit:
+		return "double-credit"
+	}
+	return "unknown"
+}
+
+// Ledger is a correct, in-memory, double-entry ledger, or a ledger broken in
+// exactly one named way.
 //
 // All state sits behind one mutex. That is deliberate: concurrency is not what
 // this driver is for. It exists so that a run of the harness can be replayed
@@ -29,6 +75,7 @@ type Ledger struct {
 	journal  []assay.Posting
 	idem     map[string]assay.Result
 	nextTxn  int
+	breakage Breakage
 }
 
 // New returns a ledger whose accounts open at the given balances.
@@ -38,13 +85,24 @@ type Ledger struct {
 // when the run began. Counting them as deposits would make every run look like
 // it had conserved nothing.
 func New(openings map[assay.AccountID]assay.Money) *Ledger {
+	return NewBroken(openings, BreakNone)
+}
+
+// NewBroken returns a ledger carrying exactly one named defect.
+//
+// This is how the defect corpus is seeded: the deviation lives here, next to
+// the correct code it departs from, so the two cannot drift apart the way a
+// separate mock would. A test that injects its own bug proves the detector
+// works against the test's idea of the bug, not against the ledger's.
+func NewBroken(openings map[assay.AccountID]assay.Money, b Breakage) *Ledger {
 	balances := make(map[assay.AccountID]assay.Money, len(openings))
-	for a, b := range openings {
-		balances[a] = b
+	for a, bal := range openings {
+		balances[a] = bal
 	}
 	return &Ledger{
 		balances: balances,
 		idem:     make(map[string]assay.Result),
+		breakage: b,
 	}
 }
 
@@ -63,8 +121,10 @@ func (l *Ledger) Apply(_ context.Context, in assay.Intent) (assay.Result, error)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if prev, ok := l.idem[in.Idem]; ok {
-		return prev, nil
+	if l.breakage != BreakIdempotency {
+		if prev, ok := l.idem[in.Idem]; ok {
+			return prev, nil
+		}
 	}
 
 	res := l.check(in)
@@ -75,7 +135,9 @@ func (l *Ledger) Apply(_ context.Context, in assay.Intent) (assay.Result, error)
 	}
 	// Every outcome is remembered under the key, including rejections, so a
 	// retry is answered from the record rather than re-decided.
-	l.idem[in.Idem] = res
+	if l.breakage != BreakIdempotency {
+		l.idem[in.Idem] = res
+	}
 	return res, nil
 }
 
@@ -95,7 +157,7 @@ func (l *Ledger) check(in assay.Intent) assay.Result {
 		if _, ok := l.balances[in.To]; !ok {
 			return assay.Result{Outcome: assay.Rejected, Reason: "unknown destination account"}
 		}
-		if l.balances[in.From] < in.Amount {
+		if l.breakage != BreakOverdraft && l.balances[in.From] < in.Amount {
 			return assay.Result{Outcome: assay.Rejected, Reason: "insufficient funds"}
 		}
 	case assay.OpDeposit:
@@ -119,7 +181,14 @@ func (l *Ledger) post(txnID string, in assay.Intent) {
 			assay.Posting{TxnID: txnID, Intent: in.ID, Account: in.To, Delta: in.Amount},
 		)
 	case assay.OpDeposit:
-		l.balances[in.To] += in.Amount
+		// The defect credits the balance twice but writes one posting, so the
+		// balance and the journal drift apart by exactly one amount: the shape
+		// of every "money appeared" incident.
+		if l.breakage == BreakDoubleCredit {
+			l.balances[in.To] += in.Amount * 2
+		} else {
+			l.balances[in.To] += in.Amount
+		}
 		l.journal = append(l.journal,
 			assay.Posting{TxnID: txnID, Intent: in.ID, Account: in.To, Delta: in.Amount},
 		)
