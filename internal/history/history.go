@@ -22,15 +22,15 @@ const Version = 1
 
 // Record is one complete run.
 type Record struct {
-	Version  int              `json:"version"`
-	Seed     uint64           `json:"seed"`
-	Scenario string           `json:"scenario"`
-	Driver   string           `json:"driver"`
+	Version  int                    `json:"version"`
+	Seed     uint64                 `json:"seed"`
+	Scenario string                 `json:"scenario"`
+	Driver   string                 `json:"driver"`
 	Before   []assay.AccountBalance `json:"before"`
 	After    []assay.AccountBalance `json:"after"`
-	Attempts []Attempt        `json:"attempts"`
-	Postings []Posting        `json:"postings,omitempty"`
-	Findings []Finding        `json:"findings,omitempty"`
+	Attempts []Attempt              `json:"attempts"`
+	Postings []Posting              `json:"postings,omitempty"`
+	Findings []Finding              `json:"findings,omitempty"`
 }
 
 // Attempt is one client request and the answer it got.
@@ -59,8 +59,8 @@ type Posting struct {
 
 // Finding is one invariant violation, as recorded.
 type Finding struct {
-	Invariant string `json:"invariant"`
-	Detail    string `json:"detail"`
+	Invariant string   `json:"invariant"`
+	Detail    string   `json:"detail"`
 	Subjects  []string `json:"subjects,omitempty"`
 }
 

@@ -1,4 +1,5 @@
 /assayer
+/.gocache
 /dist
 /out
 *.test
