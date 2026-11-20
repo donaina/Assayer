@@ -1,0 +1,6 @@
+/assayer
+/dist
+/out
+*.test
+*.out
+.DS_Store
